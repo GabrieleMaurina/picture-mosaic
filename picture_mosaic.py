@@ -2,18 +2,21 @@ from PIL import Image, ImageOps
 from os.path import join, basename
 from os import walk
 import numpy as np
-import progressbar
+from progressbar import progressbar
+from random import choice
 
 INPUT = 'input'
 OUTPUT = 'output'
 TILES = 'tiles'
-TILES = 'tiles/Baby Wu Dijing'
+#TILES = 'tiles/Baby Wu Dijing'
 
-MOSAIC_X_SIZE = 200
-MOSAIC_Y_SIZE = 200
+MOSAIC_X_SIZE = 300
+MOSAIC_Y_SIZE = 300
 
 TILE_X_SIZE = 100
 TILE_Y_SIZE = 100
+
+N_TILES = 10
 
 def crop_center(img, new_x, new_y):
     old_x, old_y = img.size
@@ -39,7 +42,7 @@ def get_average_color(img):
 
 def load_tiles():
     tiles = []
-    for img in progressbar.progressbar(tuple(find_images(TILES))):
+    for img in progressbar(tuple(find_images(TILES))):
         try:
             img = Image.open(img)
         except Exception:
@@ -50,25 +53,31 @@ def load_tiles():
             tiles.append((color, tile))
     return tiles
 
+def get_best(ranked):
+    best_dist = ranked[0][0]
+    best = []
+    for dist, avg_color, tile in ranked:
+        if dist == best_dist:
+            best.append((dist, avg_color, tile))
+        else: break
+    if len(best) < N_TILES:
+        best = ranked[:N_TILES]
+    return choice(best)
+
 def get_tile(tiles, color):
-    best_tile = None
-    best_color = None
-    dist = 1000
-    for avg_color, tile in tiles:
-        new_dist = abs(color[0] - avg_color[0]) + abs(color[1] - avg_color[1]) + abs(color[2] - avg_color[2])
-        if new_dist < dist:
-            best_tile = tile
-            best_color = avg_color
-            dist = new_dist
-    diff = np.array((color[0] - best_color[0], color[1] - best_color[1], color[2] - best_color[2]), dtype=np.int16)
-    tile = np.add(best_tile, diff).clip(0, 255).astype(np.uint8)
+    ranked = [(abs(color[0] - avg_color[0]) + abs(color[1] - avg_color[1]) + abs(color[2] - avg_color[2]), avg_color, tile) for avg_color, tile in tiles]
+    ranked.sort(key=lambda v: v[0])
+    dist, avg_color, tile = get_best(ranked)
+    
+    diff = np.array((color[0] - avg_color[0], color[1] - avg_color[1], color[2] - avg_color[2]), dtype=np.int16)
+    tile = np.add(tile, diff).clip(0, 255).astype(np.uint8)
     return Image.fromarray(tile)
 
 def generate_mosaic(image, tiles):
     mosaic = Image.new('RGB', (MOSAIC_X_SIZE * TILE_X_SIZE, MOSAIC_Y_SIZE * TILE_Y_SIZE))
     x_size, y_size = image.size
     coords = [(x,y) for x in range(x_size) for y in range(y_size)]
-    for x, y in progressbar.progressbar(coords):
+    for x, y in progressbar(coords):
         x_pos = x * TILE_X_SIZE
         y_pos = y * TILE_Y_SIZE
         tile = get_tile(tiles, image.getpixel((x, y)))
