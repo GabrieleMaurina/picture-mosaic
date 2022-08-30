@@ -1,17 +1,19 @@
-from PIL import Image
-from os.path import join
+from PIL import Image, ImageOps
+from os.path import join, basename
 from os import walk
 import numpy as np
+import progressbar
 
-IMAGE = 'image.jpg'
-MOSAIC = 'mosaic.png'
-IMAGES = 'images'
+INPUT = 'input'
+OUTPUT = 'output'
+TILES = 'tiles'
+TILES = 'tiles/Baby Wu Dijing'
 
-MOSAIC_X_SIZE = 100
-MOSAIC_Y_SIZE = 100
+MOSAIC_X_SIZE = 200
+MOSAIC_Y_SIZE = 200
 
-TILE_X_SIZE = 10
-TILE_Y_SIZE = 10
+TILE_X_SIZE = 100
+TILE_Y_SIZE = 100
 
 def crop_center(img, new_x, new_y):
     old_x, old_y = img.size
@@ -27,21 +29,26 @@ def crop_center(img, new_x, new_y):
         img = img.crop((0, dy, old_x, dy + y))
     return img.resize((new_x, new_y))
 
-def load_images():
-    for root, dirs, files in walk(IMAGES):
+def find_images(path):
+    for root, dirs, files in walk(path):
         for file in files:
-            try:
-                img = Image.open(join(root, file)).convert('RGB')
-            except Exception:
-                pass
-            else:
-                yield np.asarray(crop_center(img, TILE_X_SIZE, TILE_Y_SIZE))
+            yield join(root, file)
 
-def get_dominant_color(img):
+def get_average_color(img):
     return tuple(round(v) for v in img.mean(axis=(0, 1)))
 
-def get_colors_and_tiles():
-    return tuple((get_dominant_color(img), img) for img in load_images())
+def load_tiles():
+    tiles = []
+    for img in progressbar.progressbar(tuple(find_images(TILES))):
+        try:
+            img = Image.open(img)
+        except Exception:
+            pass
+        else:
+            tile = np.asarray(crop_center(ImageOps.exif_transpose(img).convert('RGB'), TILE_X_SIZE, TILE_Y_SIZE))
+            color = get_average_color(tile)
+            tiles.append((color, tile))
+    return tiles
 
 def get_tile(tiles, color):
     best_tile = None
@@ -53,31 +60,30 @@ def get_tile(tiles, color):
             best_tile = tile
             best_color = avg_color
             dist = new_dist
-    diff = (color[0] - best_color[0], color[1] - best_color[1], color[2] - best_color[2])
-    return Image.fromarray(np.add(best_tile, diff, casting='unsafe', dtype=np.uint8))
+    diff = np.array((color[0] - best_color[0], color[1] - best_color[1], color[2] - best_color[2]), dtype=np.int16)
+    tile = np.add(best_tile, diff).clip(0, 255).astype(np.uint8)
+    return Image.fromarray(tile)
 
 def generate_mosaic(image, tiles):
     mosaic = Image.new('RGB', (MOSAIC_X_SIZE * TILE_X_SIZE, MOSAIC_Y_SIZE * TILE_Y_SIZE))
     x_size, y_size = image.size
-    for x in range(x_size):
+    coords = [(x,y) for x in range(x_size) for y in range(y_size)]
+    for x, y in progressbar.progressbar(coords):
         x_pos = x * TILE_X_SIZE
-        for y in range(y_size):
-            print(x, y)
-            y_pos = y * TILE_Y_SIZE
-            tile = get_tile(tiles, image.getpixel((x, y)))
-            mosaic.paste(tile, (x_pos, y_pos, x_pos + TILE_X_SIZE, y_pos + TILE_Y_SIZE))
+        y_pos = y * TILE_Y_SIZE
+        tile = get_tile(tiles, image.getpixel((x, y)))
+        mosaic.paste(tile, (x_pos, y_pos, x_pos + TILE_X_SIZE, y_pos + TILE_Y_SIZE))
     return mosaic
 
 def main():
-    print('Loading main image')
-    image = Image.open(IMAGE)
-    image = crop_center(image, MOSAIC_X_SIZE, MOSAIC_Y_SIZE)
-    print('Loading images')
-    tiles = get_colors_and_tiles()
-    print(f'Loaded {len(tiles)} images')
-    print('Generating mosaic')
-    mosaic = generate_mosaic(image, tiles)
-    mosaic.save(MOSAIC)
+    print('Loading tiles')
+    tiles = load_tiles()
+    print('Generating mosaics')
+    for img in find_images(INPUT):
+        name = basename(img.rsplit('.', 1)[0])
+        print(name)
+        image = crop_center(ImageOps.exif_transpose(Image.open(img)).convert('RGB'), MOSAIC_X_SIZE, MOSAIC_Y_SIZE)
+        generate_mosaic(image, tiles).save(join(OUTPUT, name) + '.png')
 
 if __name__ == '__main__':
     main()
